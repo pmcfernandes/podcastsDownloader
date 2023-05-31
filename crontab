@@ -1,0 +1,1 @@
+0 0 */1 * * cd /usr/src/app && /usr/bin/python3.9 pod.py fetch && /usr/bin/python3.9 pod.py download
