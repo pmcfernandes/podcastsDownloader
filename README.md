@@ -34,5 +34,14 @@ You can use this command with fetch to update database and download all next epi
 
 	python3 pod.py fetch && python3 pod.py download
 
+#### Import podcasts from rss
+Import a rss feed directly without iTunes API search 
+
+    python3 pod.py import "https://www.omnycontent.com/d/playlist/58028bcf-e01f-4274-aca7-ad3300f67928/93818198-74f6-4158-8c20-ad7f009ff4a7/0db2396f-b8cc-4933-b9b7-ad7f009ff57a/podcast.rss"
+
+Or from local storage
+
+    python3 pod.py import "/podcasts/feeds/my-podcast-feed.rss"
+
 ## Running
-![enter image description here](https://raw.githubusercontent.com/pmcfernandes/podcastsDownloader/master/screenshot.png)
+![pod.py running in command line](https://raw.githubusercontent.com/pmcfernandes/podcastsDownloader/master/screenshot.png)

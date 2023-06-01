@@ -3,6 +3,7 @@
 Usage:
     pod.py search <regex>
     pod.py list
+    pod.py import <rss>
     pod.py add <id>
     pod.py delete <id>
     pod.py fetch
@@ -43,47 +44,111 @@ def createDatabase(conn):
     pass
 
 
+def getCategories(tags):
+    cat = []
+    for tag in tags:
+        cat.append(tag.term)
+    return ', '.join(cat)
+
+
 def searchTunes(text: str):
     url = "https://itunes.apple.com/search?term={term}&entity=podcast".format(term=text)
-    request = requests.get(url).json()
+    response = requests.get(url)
 
-    table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Id", style="dim", width=10)
-    table.add_column("Title")
-    table.add_column("Artist")
-    table.add_column("Genre")
+    with response as r:
+        if r.status_code == 200:
+            request = r.json()
 
-    for result in request['results']:
-        table.add_row(str(result['collectionId']), str(result['collectionName']), str(result['artistName']),
-                      str(result['primaryGenreName']))
+            if int(request['resultCount']) == 0:
+                console.print("Nothing to show.")
+            else:
+                table = Table(show_header=True, header_style="bold magenta")
+                table.add_column("Id", style="dim", width=10)
+                table.add_column("Title")
+                table.add_column("Artist")
+                table.add_column("Genre")
 
-    console.print(table)
+                for result in request['results']:
+                    table.add_row(str(result['collectionId']),
+                                  str(result['collectionName']),
+                                  str(result['artistName']),
+                                  str(result['primaryGenreName']))
+
+                console.print(table)
     pass
 
 
-def addPostcast(conn, id):
-    url = "https://itunes.apple.com/lookup?id={id}".format(id=id)
-    request = requests.get(url).json()
+def isRssImported(conn, rss, itunes_id=None):
+    cur = conn.cursor()
+    if itunes_id is None:
+        cur.execute("""
+            SELECT COUNT(id) AS Total FROM podcasts WHERE rss_url = ? AND itunes_id = 0
+        """, (rss,))
+    else:
+        cur.execute("""
+            SELECT COUNT(id) AS Total FROM podcasts WHERE rss_url = ? AND itunes_id = ?
+        """, (rss, itunes_id))
 
-    if int(request['resultCount']) == 1:
-        podcast = request['results'][0]
+    return False if int(cur.fetchone()[0]) == 0 else True
 
+
+def importRssFeed(conn, rss):
+    if not isRssImported(conn, rss):
+        if not rss.startswith("http"):
+            if not os.path.exists(rss):
+                console.print(f"[red]Error:[/red] File '{rss}' not exists".format(rss=rss))
+                return
+
+        feed = feedparser.parse(rss).feed
         cur = conn.cursor()
         cur.execute("""
-          INSERT INTO podcasts (title, artist, genre, rss_url, image_url, itunes_id, date) VALUES (?, ?, ?, ?, ?, ?, ?);
-        """, (podcast["collectionName"], podcast["artistName"], podcast["primaryGenreName"], podcast["feedUrl"],
-              podcast["artworkUrl600"], id, time()))
+            INSERT INTO podcasts (title, artist, genre, rss_url, image_url, itunes_id, date) VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (feed.title, feed.author_detail.name, getCategories(feed.tags), rss, feed.image.url, 0, time()))
 
         inserted_id = cur.lastrowid
-        fetchPodcastItems(conn, id)
+        fetchPodcastItems(conn, inserted_id)
 
         try:
             conn.commit()
         except sqlite3.Error as e:
             conn.rollback()
-            raise Exception("Can't create podcast entry.")
+            raise Exception("[red]Error:[/red] Can't create podcast entry in queue.")
 
-        return inserted_id
+    pass
+
+
+def addPostcast(conn, id):
+    url = "https://itunes.apple.com/lookup?id={id}".format(id=id)
+    response = requests.get(url)
+
+    with response as r:
+        if r.status_code == 200:
+            request = r.json()
+
+            if int(request['resultCount']) == 1:
+                podcast = request['results'][0]
+
+                if not isRssImported(conn, podcast["feedUrl"], id):
+                    cur = conn.cursor()
+                    cur.execute("""
+                      INSERT INTO podcasts (title, artist, genre, rss_url, image_url, itunes_id, date) VALUES (?, ?, ?, ?, ?, ?, ?);
+                    """, (podcast["collectionName"],
+                          podcast["artistName"],
+                          podcast["primaryGenreName"],
+                          podcast["feedUrl"],
+                          podcast["artworkUrl600"],
+                          id, time()))
+
+                    inserted_id = cur.lastrowid
+                    fetchPodcastItems(conn, inserted_id)
+
+                    try:
+                        conn.commit()
+                    except sqlite3.Error as e:
+                        conn.rollback()
+                        raise Exception("[red]Error:[/red] Can't create podcast entry in queue.")
+
+                    return inserted_id
     return 0
 
 
@@ -102,7 +167,7 @@ def listPodcasts(conn):
 
     for row in rows:
         inserted_date = datetime.utcfromtimestamp(int(row[4])).strftime('%Y-%m-%d')
-        table.add_row(str(row[5]), inserted_date, str(row[1]), str(row[2]), str(row[3]))
+        table.add_row(str(row[0]), inserted_date, str(row[1]), str(row[2]), str(row[3]))
 
     console.print(table)
     pass
@@ -111,18 +176,18 @@ def listPodcasts(conn):
 def deletePostcast(conn, id):
     cur = conn.cursor()
     cur.execute("""
-        DELETE FROM podcasts_items WHERE podcast_id = (SELECT id FROM podcasts WHERE itunes_id = ?)
+        DELETE FROM podcasts_items WHERE podcast_id = ?
     """, (id,))
 
     cur.execute("""
-        DELETE FROM podcasts WHERE itunes_id = ?
+        DELETE FROM podcasts WHERE id = ?
     """, (id,))
 
     try:
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
-        raise Exception("Can't delete podcast entries.")
+        raise Exception("[red]Error:[/red] Can't delete podcast entries.")
 
     pass
 
@@ -130,7 +195,7 @@ def deletePostcast(conn, id):
 def fetchAllItems(conn):
     cur = conn.cursor()
     rows = cur.execute("""
-        SELECT itunes_id FROM podcasts
+        SELECT id FROM podcasts
     """)
 
     for row in rows:
@@ -142,39 +207,41 @@ def fetchAllItems(conn):
 def fetchPodcastItems(conn, podcastId):
     cur = conn.cursor()
     rows = cur.execute("""
-        SELECT id, rss_url, artist FROM podcasts WHERE itunes_id = ?
+        SELECT id, title, rss_url, artist, genre FROM podcasts WHERE id = ?
     """, (podcastId,))
 
     for row in rows:
-        _id = row[0]
-        rss_url = row[1]
+        rss_url = row[2]
         feed = feedparser.parse(rss_url)
 
         for entry in feed.entries:
-            published_date = entry.published_parsed
-            _time = datetime(published_date.tm_year, published_date.tm_mon, published_date.tm_mday).timestamp()
-
             if not itemIsFetched(conn, entry.guid):
+                author = str(row[3]) if not hasattr(entry, "author") else entry.author
+                tags = str(row[4]) if not hasattr(entry, 'tags') else getCategories(entry.tags)
+                published_date = entry.published_parsed
+                _time = datetime(published_date.tm_year, published_date.tm_mon, published_date.tm_mday).timestamp()
+
                 cur = conn.cursor()
                 cur.execute("""
                     INSERT INTO podcasts_items (podcast_id, guid, title, desc, keywords, author, media_url, publish_date, downloaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
-                """, (_id, entry.guid, entry.title, entry.description, '', entry.author, entry.enclosures[0].href, _time))
+                """, (podcastId, entry.guid, entry.title, entry.description, tags, author,
+                      entry.enclosures[0].href, _time))
+
+                console.print("[green]Founded:[/green] Podcast '{podcast}' have a new episode '{episode}'.".format(episode=entry.title, podcast=str(row[1])))
 
     try:
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
-        raise Exception("Can't fetch podcast entries.")
+        raise Exception("[red]Error:[/red] Can't fetch podcast entries from feed.")
 
     pass
 
 
 def itemIsFetched(conn, guid: str):
     cur = conn.cursor()
-    rows = cur.execute(f"SELECT COUNT(guid) as total FROM podcasts_items WHERE guid = '{guid}'".format(guid=guid))
-
-    for row in rows:
-        return False if row[0] == 0 else True
+    cur.execute(f"SELECT COUNT(guid) as total FROM podcasts_items WHERE guid = '{guid}'".format(guid=guid))
+    return False if int(cur.fetchone()[0]) == 0 else True
 
 
 def downloadPodcasts(conn):
@@ -197,7 +264,8 @@ def downloadPodcasts(conn):
 
             path = urlsplit(media_url).path
             extension = os.path.splitext(path)[-1]
-            filename = os.path.join(folderName,"{date}-{title}{ext}".format(date=date, title=title_slug, ext=extension))
+            filename = os.path.join(folderName, "{date}-{title}{ext}".format(date=date,
+                                                                             title=title_slug, ext=extension))
 
             if not os.path.exists(filename):
                 response = requests.get(media_url, stream=True)
@@ -210,7 +278,8 @@ def downloadPodcasts(conn):
                                 shutil.copyfileobj(r.raw, f)
 
                             updateDownloadedState(conn, str(row[5]))
-                            console.print(f"{filename} file downloaded with success.".format(filename=filename))
+                            console.print(
+                                f"[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
                         except:
                             pass
         except:
@@ -229,7 +298,7 @@ def updateDownloadedState(conn, guid: str):
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
-        raise Exception(f"Can't update podcast entry {guid}.".format(guid=guid))
+        raise Exception(f"[red]Error:[/red] Can't update podcast entry {guid} to downloaded state.".format(guid=guid))
 
     pass
 
@@ -262,7 +331,7 @@ def createPoster(folderName, image_url):
                 try:
                     with open(filename, 'wb') as f:
                         shutil.copyfileobj(r.raw, f)
-                        console.print(f"{filename} file downloaded with success.".format(filename=filename))
+                        console.print(f"[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
                 except:
                     pass
 
@@ -293,6 +362,10 @@ if __name__ == "__main__":
     if arguments["add"]:
         _id = str(arguments["<id>"])
         addPostcast(conn, _id)
+
+    if arguments["import"]:
+        rss = str(arguments["<rss>"])
+        importRssFeed(conn, rss)
 
     if arguments["delete"]:
         _id = str(arguments["<id>"])
