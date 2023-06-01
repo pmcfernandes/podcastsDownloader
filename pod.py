@@ -84,8 +84,7 @@ def addPostcast(conn, id):
             raise Exception("Can't create podcast entry.")
 
         return inserted_id
-
-    pass
+    return 0
 
 
 def listPodcasts(conn):
@@ -241,6 +240,8 @@ def createPodcastDir(artist, title):
     else:
         folderName = f"{artist} - {title}".format(artist=artist, title=title)
 
+    folderName = os.path.join(os.getenv('PODCASTS_PATH', 'podcasts'), folderName)
+
     if not os.path.exists(folderName):
         os.makedirs(folderName)
 
@@ -271,8 +272,13 @@ def createPoster(folderName, image_url):
 if __name__ == "__main__":
     arguments = docopt(__doc__, argv=None, help=True, version="1.0", options_first=False)
 
-    firstTime = False if os.path.exists("podcasts.db") else True
-    conn = sqlite3.connect("podcasts.db")
+    configFolder = os.getenv("POD_CONFIG", "config")
+    if not os.path.exists(configFolder):
+        os.makedirs(configFolder)
+
+    dbFilename = os.path.join(configFolder, "podcasts.db")
+    firstTime = False if os.path.exists(dbFilename) else True
+    conn = sqlite3.connect(dbFilename)
 
     if firstTime:
         createDatabase(conn)

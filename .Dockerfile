@@ -2,6 +2,9 @@ FROM python:3.9-alpine
 
 WORKDIR /usr/src/app
 
+ENV PODCASTS_PATH /podcasts
+ENV POD_CONFIG /usr/src/app/config
+
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
