@@ -13,6 +13,7 @@ Usage:
 Options:
   -h --help     Show this screen.
 """
+from jaraco.docker import is_docker
 from docopt import docopt
 from datetime import datetime
 from urllib.parse import urlsplit
@@ -309,8 +310,7 @@ def createPodcastDir(artist, title):
     else:
         folderName = f"{artist} - {title}".format(artist=artist, title=title)
 
-    folderName = os.path.join(os.getenv('PODCASTS_PATH', 'podcasts'), folderName)
-
+    folderName = "/podcasts" if is_docker() else os.path.join(os.getenv('PODCASTS_PATH', 'podcasts'), folderName)
     if not os.path.exists(folderName):
         os.makedirs(folderName)
 
@@ -341,7 +341,7 @@ def createPoster(folderName, image_url):
 if __name__ == "__main__":
     arguments = docopt(__doc__, argv=None, help=True, version="1.0", options_first=False)
 
-    configFolder = os.getenv("POD_CONFIG", "config")
+    configFolder = "/config" if is_docker() else os.getenv("POD_CONFIG", "config")
     if not os.path.exists(configFolder):
         os.makedirs(configFolder)
 

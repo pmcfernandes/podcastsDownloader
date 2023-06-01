@@ -3,3 +3,4 @@ rich==13.3.5
 requests==2.31.0
 feedparser
 unidecode
+jaraco.docker
