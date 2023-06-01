@@ -33,3 +33,6 @@ Use this command periodically to get poster image and all non-downloaded podcast
 You can use this command with fetch to update database and download all next episodes in this way.
 
 	python3 pod.py fetch && python3 pod.py download
+
+## Running
+![enter image description here](https://raw.githubusercontent.com/pmcfernandes/podcastsDownloader/master/screenshot.png)
