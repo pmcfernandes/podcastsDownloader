@@ -4,7 +4,7 @@ Usage:
     pod.py search <regex>
     pod.py list
     pod.py import <rss>
-    pod.py add <id>
+    pod.py add <iTunes>
     pod.py delete <id>
     pod.py fetch
     pod.py fetch <id>
@@ -117,7 +117,7 @@ def importRssFeed(conn, rss):
     pass
 
 
-def addPostcast(conn, id):
+def addPodcast(conn, id):
     url = "https://itunes.apple.com/lookup?id={id}".format(id=id)
     response = requests.get(url)
 
@@ -173,7 +173,7 @@ def listPodcasts(conn):
     pass
 
 
-def deletePostcast(conn, id):
+def deletePodcast(conn, id):
     cur = conn.cursor()
     cur.execute("""
         DELETE FROM podcasts_items WHERE podcast_id = ?
@@ -360,8 +360,8 @@ if __name__ == "__main__":
         listPodcasts(conn)
 
     if arguments["add"]:
-        _id = str(arguments["<id>"])
-        addPostcast(conn, _id)
+        _id = str(arguments["<iTunes>"])
+        addPodcast(conn, _id)
 
     if arguments["import"]:
         rss = str(arguments["<rss>"])
@@ -369,7 +369,7 @@ if __name__ == "__main__":
 
     if arguments["delete"]:
         _id = str(arguments["<id>"])
-        deletePostcast(conn, _id)
+        deletePodcast(conn, _id)
 
     if arguments["fetch"]:
         _id = arguments["<id>"]
