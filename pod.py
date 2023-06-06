@@ -61,7 +61,7 @@ def searchTunes(text: str):
             request = r.json()
 
             if int(request['resultCount']) == 0:
-                console.print("Nothing to show.")
+                console.print("[yellow]Important:[/yellow] Nothing to show.")
             else:
                 table = Table(show_header=True, header_style="bold magenta")
                 table.add_column("Id", style="dim", width=10)
@@ -97,7 +97,7 @@ def importRssFeed(conn, rss):
     if not isRssImported(conn, rss):
         if not rss.startswith("http"):
             if not os.path.exists(rss):
-                console.print(f"[red]Error:[/red] File '{rss}' not exists".format(rss=rss))
+                console.print("[red]Error:[/red] File '{rss}' not exists".format(rss=rss))
                 return
 
         feed = feedparser.parse(rss).feed
@@ -156,7 +156,7 @@ def addPodcast(conn, id):
 def listPodcasts(conn):
     cur = conn.cursor()
     rows = cur.execute("""
-        SELECT id, title, artist, genre, date, itunes_id FROM podcasts
+        SELECT id, title, artist, genre, date, itunes_id FROM podcasts ORDER BY title
     """)
 
     table = Table(show_header=True, header_style="bold magenta")
@@ -241,7 +241,7 @@ def fetchPodcastItems(conn, podcastId):
 
 def itemIsFetched(conn, guid: str):
     cur = conn.cursor()
-    cur.execute(f"SELECT COUNT(guid) as total FROM podcasts_items WHERE guid = '{guid}'".format(guid=guid))
+    cur.execute("SELECT COUNT(guid) as total FROM podcasts_items WHERE guid = '{guid}'".format(guid=guid))
     return False if int(cur.fetchone()[0]) == 0 else True
 
 
@@ -265,8 +265,7 @@ def downloadPodcasts(conn):
 
             path = urlsplit(media_url).path
             extension = os.path.splitext(path)[-1]
-            filename = os.path.join(folderName, "{date}-{title}{ext}".format(date=date,
-                                                                             title=title_slug, ext=extension))
+            filename = os.path.join(folderName, "{date}-{title}{ext}".format(date=date, title=title_slug, ext=extension))
 
             if not os.path.exists(filename):
                 response = requests.get(media_url, stream=True)
@@ -279,8 +278,7 @@ def downloadPodcasts(conn):
                                 shutil.copyfileobj(r.raw, f)
 
                             updateDownloadedState(conn, str(row[5]))
-                            console.print(
-                                f"[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
+                            console.print("[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
                         except:
                             pass
         except:
@@ -299,7 +297,7 @@ def updateDownloadedState(conn, guid: str):
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
-        raise Exception(f"[red]Error:[/red] Can't update podcast entry {guid} to downloaded state.".format(guid=guid))
+        raise Exception("[red]Error:[/red] Can't update podcast entry {guid} to downloaded state.".format(guid=guid))
 
     pass
 
@@ -308,7 +306,7 @@ def createPodcastDir(artist, title):
     if artist == title or title.startswith(artist):
         folderName = title
     else:
-        folderName = f"{artist} - {title}".format(artist=artist, title=title)
+        folderName = "{artist} - {title}".format(artist=artist, title=title)
 
     folderName = "/podcasts" if is_docker() else os.path.join(os.getenv('PODCASTS_PATH', 'podcasts'), folderName)
     if not os.path.exists(folderName):
@@ -331,7 +329,7 @@ def createPoster(folderName, image_url):
                 try:
                     with open(filename, 'wb') as f:
                         shutil.copyfileobj(r.raw, f)
-                        console.print(f"[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
+                        console.print("[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
                 except:
                     pass
 
