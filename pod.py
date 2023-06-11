@@ -27,6 +27,7 @@ import os
 import shutil
 import re
 import unidecode
+import eyed3
 
 console = Console()
 
@@ -276,6 +277,18 @@ def downloadPodcasts(conn):
                         try:
                             with open(filename, 'wb') as f:
                                 shutil.copyfileobj(r.raw, f)
+
+                                audiofile = eyed3.load(filename)
+
+                                if audiofile is not None:
+                                    audiofile.initTag()
+                                    audiofile.tag.clear()
+
+                                    audiofile.tag.artist = str(row[1])
+                                    audiofile.tag.album = str(row[0])
+                                    audiofile.tag.title = str(row[6])
+                                    audiofile.tag.release_date = date
+                                    audiofile.tag.save()
 
                             updateDownloadedState(conn, str(row[5]))
                             console.print("[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
