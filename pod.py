@@ -17,6 +17,7 @@ from jaraco.docker import is_docker
 from docopt import docopt
 from datetime import datetime
 from urllib.parse import urlsplit
+from urllib import request
 from time import time
 from rich.console import Console
 from rich.table import Table
@@ -40,7 +41,7 @@ def createDatabase(conn):
     """)
 
     cur.execute("""
-        CREATE TABLE podcasts_items (id INTEGER PRIMARY KEY AUTOINCREMENT, podcast_id int, guid text, title text, desc text, keywords text, author text, media_url text, publish_date int, downloaded int);
+        CREATE TABLE podcasts_items (id INTEGER PRIMARY KEY AUTOINCREMENT, podcast_id int, guid text, title text, desc text, keywords text, author text, media_url text, image_url text, publish_date int, downloaded int);
     """)
 
     pass
@@ -209,7 +210,7 @@ def fetchAllItems(conn):
 def fetchPodcastItems(conn, podcastId):
     cur = conn.cursor()
     rows = cur.execute("""
-        SELECT id, title, rss_url, artist, genre FROM podcasts WHERE id = ?
+        SELECT id, title, rss_url, artist, genre, image_url FROM podcasts WHERE id = ?
     """, (podcastId,))
 
     for row in rows:
@@ -220,14 +221,15 @@ def fetchPodcastItems(conn, podcastId):
             if not itemIsFetched(conn, entry.guid):
                 author = str(row[3]) if not hasattr(entry, "author") else entry.author
                 tags = str(row[4]) if not hasattr(entry, 'tags') else getCategories(entry.tags)
+                image = str(row[5]) if not hasattr(entry, 'image') else entry.image.href
                 published_date = entry.published_parsed
                 _time = datetime(published_date.tm_year, published_date.tm_mon, published_date.tm_mday).timestamp()
 
                 cur = conn.cursor()
                 cur.execute("""
-                    INSERT INTO podcasts_items (podcast_id, guid, title, desc, keywords, author, media_url, publish_date, downloaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    INSERT INTO podcasts_items (podcast_id, guid, title, desc, keywords, author, media_url, image_url, publish_date, downloaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 """, (podcastId, entry.guid, entry.title, entry.description, tags, author,
-                      entry.enclosures[0].href, _time))
+                      entry.enclosures[0].href, image, _time))
 
                 console.print("[green]Founded:[/green] Podcast '{podcast}' have a new episode '{episode}'.".format(episode=entry.title, podcast=str(row[1])))
 
@@ -246,6 +248,16 @@ def itemIsFetched(conn, guid: str):
     return False if int(cur.fetchone()[0]) == 0 else True
 
 
+def downloadPodcastEpisodeImage(url):
+    try:
+        response = request.urlopen(url)
+        imagedata = response.read()
+    except:
+        imagedata = None
+
+    return imagedata
+
+
 def downloadPodcasts(conn):
     cur = conn.cursor()
     rows = cur.execute("""
@@ -253,6 +265,7 @@ def downloadPodcasts(conn):
         FROM podcasts_items
             INNER JOIN podcasts ON podcasts.id = podcasts_items.podcast_id
         WHERE podcasts_items.downloaded = 0
+        ORDER BY podcasts_items.id DESC
     """)
 
     for row in rows:
@@ -260,9 +273,10 @@ def downloadPodcasts(conn):
         createPoster(folderName, str(row[2]))
 
         try:
-            date = datetime.fromtimestamp(int(row[11])).strftime("%Y-%m-%d")
+            date = datetime.fromtimestamp(int(row[12])).strftime("%Y-%m-%d")
             title_slug = re.sub(r'[\W_]+', '-', unidecode.unidecode(str(row[6])))
             media_url = str(row[10])
+            image_url = str(row[11])
 
             path = urlsplit(media_url).path
             extension = os.path.splitext(path)[-1]
@@ -277,7 +291,6 @@ def downloadPodcasts(conn):
                         try:
                             with open(filename, 'wb') as f:
                                 shutil.copyfileobj(r.raw, f)
-
                                 audiofile = eyed3.load(filename)
 
                                 if audiofile is not None:
@@ -288,6 +301,11 @@ def downloadPodcasts(conn):
                                     audiofile.tag.album = str(row[0])
                                     audiofile.tag.title = str(row[6])
                                     audiofile.tag.release_date = date
+
+                                    episodeImage = downloadPodcastEpisodeImage(image_url)
+                                    if episodeImage is not None:
+                                        audiofile.tag.images.set(3, episodeImage, "image/jpeg", u"cover")
+
                                     audiofile.tag.save()
 
                             updateDownloadedState(conn, str(row[5]))
