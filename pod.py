@@ -9,6 +9,9 @@ Usage:
     pod.py fetch
     pod.py fetch <id>
     pod.py download
+    pod.py podcast <id> suspend
+    pod.py podcast <id> continue
+    pod.py podcast <id> download
 
 Options:
   -h --help     Show this screen.
@@ -37,14 +40,25 @@ def createDatabase(conn):
     cur = conn.cursor()
 
     cur.execute("""
-      CREATE TABLE podcasts (id INTEGER PRIMARY KEY AUTOINCREMENT, title text, artist text, genre text, rss_url text, image_url text, itunes_id int, date int);
+      CREATE TABLE podcasts (id INTEGER PRIMARY KEY AUTOINCREMENT, title text, artist text, genre text, rss_url text, image_url text, itunes_id int, date int, suspended int);
     """)
 
     cur.execute("""
-        CREATE TABLE podcasts_items (id INTEGER PRIMARY KEY AUTOINCREMENT, podcast_id int, guid text, title text, desc text, keywords text, author text, media_url text, image_url text, publish_date int, downloaded int);
+        CREATE TABLE podcasts_items (id INTEGER PRIMARY KEY AUTOINCREMENT, podcast_id int, guid text, title text, desc text, keywords text, author text, media_url text, image_url text, publish_date int, filename text, downloaded int);
     """)
 
     pass
+
+
+def normalize(text):
+    valid_chars = "-_.() "
+    out = ""
+    for c in text:
+        if str.isalpha(c) or str.isdigit(c) or (c in valid_chars):
+            out += c
+        else:
+            out += "_"
+    return out
 
 
 def getCategories(tags):
@@ -55,7 +69,7 @@ def getCategories(tags):
 
 
 def searchTunes(text: str):
-    url = "https://itunes.apple.com/search?term={term}&entity=podcast".format(term=text)
+    url = f"https://itunes.apple.com/search?term={text}&entity=podcast"
     response = requests.get(url)
 
     with response as r:
@@ -99,13 +113,13 @@ def importRssFeed(conn, rss):
     if not isRssImported(conn, rss):
         if not rss.startswith("http"):
             if not os.path.exists(rss):
-                console.print("[red]Error:[/red] File '{rss}' not exists".format(rss=rss))
+                console.print(f"[red]Error:[/red] File '{rss}' not exists.")
                 return
 
         feed = feedparser.parse(rss).feed
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO podcasts (title, artist, genre, rss_url, image_url, itunes_id, date) VALUES (?, ?, ?, ?, ?, ?, ?);
+            INSERT INTO podcasts (title, artist, genre, rss_url, image_url, itunes_id, date, suspended) VALUES (?, ?, ?, ?, ?, ?, ?, 0);
         """, (feed.title, feed.author_detail.name, getCategories(feed.tags), rss, feed.image.url, 0, time()))
 
         inserted_id = cur.lastrowid
@@ -115,13 +129,13 @@ def importRssFeed(conn, rss):
             conn.commit()
         except sqlite3.Error as e:
             conn.rollback()
-            raise Exception("[red]Error:[/red] Can't create podcast entry in queue.")
+            console.print("[red]Error:[/red] Can't create podcast entry in queue.")
 
     pass
 
 
 def addPodcast(conn, id):
-    url = "https://itunes.apple.com/lookup?id={id}".format(id=id)
+    url = f"https://itunes.apple.com/lookup?id={id}"
     response = requests.get(url)
 
     with response as r:
@@ -134,7 +148,7 @@ def addPodcast(conn, id):
                 if not isRssImported(conn, podcast["feedUrl"], id):
                     cur = conn.cursor()
                     cur.execute("""
-                      INSERT INTO podcasts (title, artist, genre, rss_url, image_url, itunes_id, date) VALUES (?, ?, ?, ?, ?, ?, ?);
+                      INSERT INTO podcasts (title, artist, genre, rss_url, image_url, itunes_id, date, suspended) VALUES (?, ?, ?, ?, ?, ?, ?, 0);
                     """, (podcast["collectionName"],
                           podcast["artistName"],
                           podcast["primaryGenreName"],
@@ -149,7 +163,7 @@ def addPodcast(conn, id):
                         conn.commit()
                     except sqlite3.Error as e:
                         conn.rollback()
-                        raise Exception("[red]Error:[/red] Can't create podcast entry in queue.")
+                        console.print("[red]Error:[/red] Can't create podcast entry in queue.")
 
                     return inserted_id
     return 0
@@ -176,6 +190,21 @@ def listPodcasts(conn):
     pass
 
 
+def suspendPodcast(conn, id, suspend):
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE podcasts SET suspended = ? WHERE id = ?
+   """, (0 if suspend is False else 1, id,))
+
+    try:
+        conn.commit()
+    except sqlite3.Error as e:
+        conn.rollback()
+        console.print("[red]Error:[/red] Can't update podcast entry.")
+
+    pass
+
+
 def deletePodcast(conn, id):
     cur = conn.cursor()
     cur.execute("""
@@ -190,7 +219,7 @@ def deletePodcast(conn, id):
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
-        raise Exception("[red]Error:[/red] Can't delete podcast entries.")
+        console.print("[red]Error:[/red] Can't delete podcast entries.")
 
     pass
 
@@ -222,22 +251,23 @@ def fetchPodcastItems(conn, podcastId):
                 author = str(row[3]) if not hasattr(entry, "author") else entry.author
                 tags = str(row[4]) if not hasattr(entry, 'tags') else getCategories(entry.tags)
                 image = str(row[5]) if not hasattr(entry, 'image') else entry.image.href
+                media_url = "" if len(entry.enclosures) == 0 else entry.enclosures[0].href
                 published_date = entry.published_parsed
                 _time = datetime(published_date.tm_year, published_date.tm_mon, published_date.tm_mday).timestamp()
 
                 cur = conn.cursor()
                 cur.execute("""
-                    INSERT INTO podcasts_items (podcast_id, guid, title, desc, keywords, author, media_url, image_url, publish_date, downloaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-                """, (podcastId, entry.guid, entry.title, entry.description, tags, author,
-                      entry.enclosures[0].href, image, _time))
+                    INSERT INTO podcasts_items (podcast_id, guid, title, desc, keywords, author, media_url, image_url, publish_date, filename, downloaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0)
+                """, (podcastId, entry.guid, entry.title, entry.description, tags, author, media_url, image, _time))
 
-                console.print("[green]Founded:[/green] Podcast '{podcast}' have a new episode '{episode}'.".format(episode=entry.title, podcast=str(row[1])))
+                console.print("[green]Founded:[/green] Podcast '{podcast}' have a new episode '{episode}'.".format(
+                    episode=entry.title, podcast=str(row[1])))
 
     try:
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
-        raise Exception("[red]Error:[/red] Can't fetch podcast entries from feed.")
+        console.print("[red]Error:[/red] Can't fetch podcast entries from feed.")
 
     pass
 
@@ -258,29 +288,47 @@ def downloadPodcastEpisodeImage(url):
     return imagedata
 
 
-def downloadPodcasts(conn):
+def dowloadAllPodcasts(conn):
     cur = conn.cursor()
     rows = cur.execute("""
-        SELECT podcasts.title as podcast_title, podcasts.artist, podcasts.image_url, podcasts_items.*
+        SELECT id FROM podcasts
+    """)
+
+    for row in rows:
+        downloadPodcasts(conn, str(row[0]))
+
+    pass
+
+
+def downloadPodcasts(conn, id):
+    cur = conn.cursor()
+    rows = cur.execute("""
+        SELECT podcasts.title as podcast_title, podcasts.artist, podcasts.image_url, 
+               podcasts_items.guid, podcasts_items.title, podcasts_items.media_url, 
+               podcasts_items.image_url, podcasts_items.publish_date
         FROM podcasts_items
             INNER JOIN podcasts ON podcasts.id = podcasts_items.podcast_id
-        WHERE podcasts_items.downloaded = 0
+        WHERE podcasts_items.downloaded = 0 AND podcasts.suspended = 0 AND podcasts.id = {id}
         ORDER BY podcasts_items.id DESC
-    """)
+    """.format(id=id))
 
     for row in rows:
         folderName = createPodcastDir(str(row[1]), str(row[0]))
         createPoster(folderName, str(row[2]))
 
         try:
-            date = datetime.fromtimestamp(int(row[12])).strftime("%Y-%m-%d")
-            title_slug = re.sub(r'[\W_]+', '-', unidecode.unidecode(str(row[6])))
-            media_url = str(row[10])
-            image_url = str(row[11])
+            media_url = str(row[5])
+
+            if len(media_url) == 0:
+                continue
+
+            date = datetime.fromtimestamp(int(row[7])).strftime("%Y-%m-%d")
+            title_slug = re.sub(r'[\W_]+', '-', unidecode.unidecode(str(row[4])))
+            image_url = str(row[6])
 
             path = urlsplit(media_url).path
             extension = os.path.splitext(path)[-1]
-            filename = os.path.join(folderName, "{date}-{title}{ext}".format(date=date, title=title_slug, ext=extension))
+            filename = os.path.join(folderName, f"{date}-{title_slug}{extension}")
 
             if not os.path.exists(filename):
                 response = requests.get(media_url, stream=True)
@@ -299,7 +347,7 @@ def downloadPodcasts(conn):
 
                                     audiofile.tag.artist = str(row[1])
                                     audiofile.tag.album = str(row[0])
-                                    audiofile.tag.title = str(row[6])
+                                    audiofile.tag.title = str(row[4])
                                     audiofile.tag.release_date = date
 
                                     episodeImage = downloadPodcastEpisodeImage(image_url)
@@ -308,8 +356,8 @@ def downloadPodcasts(conn):
 
                                     audiofile.tag.save()
 
-                            updateDownloadedState(conn, str(row[5]))
-                            console.print("[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
+                            updateDownloadedState(conn, str(row[3]), filename)
+                            console.print(f"[green]Success:[/green] {filename} file downloaded.")
                         except:
                             pass
         except:
@@ -318,17 +366,17 @@ def downloadPodcasts(conn):
     pass
 
 
-def updateDownloadedState(conn, guid: str):
+def updateDownloadedState(conn, guid: str, filename: str):
     cur = conn.cursor()
     cur.execute("""
-        UPDATE podcasts_items SET downloaded = 1 WHERE guid = ?
-    """, (guid,))
+        UPDATE podcasts_items SET filename = ?, downloaded = 1 WHERE guid = ?
+    """, (filename, guid,))
 
     try:
         conn.commit()
     except sqlite3.Error as e:
         conn.rollback()
-        raise Exception("[red]Error:[/red] Can't update podcast entry {guid} to downloaded state.".format(guid=guid))
+        console.print(f"[red]Error:[/red] Can't update podcast entry {guid} to downloaded state.")
 
     pass
 
@@ -337,7 +385,10 @@ def createPodcastDir(artist, title):
     if artist == title or title.startswith(artist):
         folderName = title
     else:
-        folderName = "{artist} - {title}".format(artist=artist, title=title)
+        folderName = f"{artist} - {title}"
+
+    # normalize folder
+    folderName = normalize(folderName)
 
     folderName = "/podcasts" if is_docker() else os.path.join(os.getenv('PODCASTS_PATH', 'podcasts'), folderName)
     if not os.path.exists(folderName):
@@ -360,7 +411,7 @@ def createPoster(folderName, image_url):
                 try:
                     with open(filename, 'wb') as f:
                         shutil.copyfileobj(r.raw, f)
-                        console.print("[green]Success:[/green] {filename} file downloaded.".format(filename=filename))
+                        console.print(f"[green]Success:[/green] {filename} file downloaded.")
                 except:
                     pass
 
@@ -370,7 +421,7 @@ def createPoster(folderName, image_url):
 if __name__ == "__main__":
     arguments = docopt(__doc__, argv=None, help=True, version="1.0", options_first=False)
 
-    configFolder = "/config" if is_docker() else os.getenv("POD_CONFIG", "config")
+    configFolder = "/config" if is_docker() else os.getenv("CONFIG_PATH", "config")
     if not os.path.exists(configFolder):
         os.makedirs(configFolder)
 
@@ -408,6 +459,15 @@ if __name__ == "__main__":
             fetchPodcastItems(conn, str(_id))
 
     if arguments["download"]:
-        downloadPodcasts(conn)
+        dowloadAllPodcasts(conn)
+
+    if arguments["podcast"]:
+        _id = arguments["<id>"]
+        if arguments["suspend"]:
+            suspendPodcast(conn, str(_id), True)
+        elif arguments["continue"]:
+            suspendPodcast(conn, str(_id), False)
+        elif arguments["download"]:
+            downloadPodcasts(conn, str(id))
 
     conn.close()

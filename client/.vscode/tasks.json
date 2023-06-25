@@ -1,0 +1,37 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "start",
+        "type": "npm",
+        "script": "start",
+        "presentation": {
+          "clear": true,
+          "reveal": "silent",
+          "showReuseMessage": true
+        }
+      },
+      {
+        "label": "build-css",
+        "type": "npm",
+        "script": "build-css",
+        "presentation": {
+          "clear": true,
+          "reveal": "silent",
+          "showReuseMessage": false
+        }
+      },
+      {
+        "label": "Development",
+        "dependsOrder": "parallel",
+        "dependsOn": ["start", "build-css"]
+      },
+      {
+        "label": "Terminate All Tasks",
+        "type": "shell",
+        "command": "echo ${input:terminate}",
+        "problemMatcher": []
+      }
+    ]
+  }
+  
