@@ -1,3 +1,7 @@
+.venv/
 .idea/
+venv/
+
 podcasts/
 config/
+__pycache__/
